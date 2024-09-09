@@ -40,8 +40,13 @@ function Send-DiscordMessage {
     }
 }
 
-# Function to list running PowerShell bot sessions
+# Function to list running PowerShell bot sessions with a `whoami` check
 function List-Sessions {
+    # Identify the current user
+    $currentUser = whoami
+    Send-DiscordMessage -Message "Listing sessions for user: $currentUser"
+
+    # Get running PowerShell bot processes
     $processes = Get-Process -Name "powershell" | Where-Object {
         $_.Path -like "*PowershellBot.ps1*"
     }
@@ -50,7 +55,8 @@ function List-Sessions {
         return "No running bot sessions found."
     }
 
-    $sessionList = ""
+    # Prepare session list with user details
+    $sessionList = "User: $currentUser`n"
     $processes | ForEach-Object {
         $sessionList += "Session ID: $($_.Id) - Start Time: $($_.StartTime)`n"
     }
