@@ -1,5 +1,4 @@
 # Define hardcoded token, channelId, botUserId, and baseUrl
-$channelId = "1282731955355648104"
 $botUserId = "1282419666022563975"  # Hardcoded bot user ID
 $baseUrl = "https://discord.com/api/v10"
 
