@@ -95,8 +95,16 @@ function Initialize-LastMessageId {
     }
 }
 
+# Send a message to the Discord channel on bot startup
+function Send-StartupMessage {
+    Send-DiscordMessage -Message "Bot has successfully connected!"
+}
+
 # Initialize the bot
 Initialize-LastMessageId
+
+# Send the startup message
+Send-StartupMessage
 
 # Main loop with rate limiting and command filtering
 while ($true) {
